@@ -189,7 +189,7 @@ class XMLElementField(fields.Field):
     """Custom field for `lxml.etree.Element serialization`."""
 
     def _serialize(self, value, attr, obj):
-        return etree.tostring(value, pretty_print=True)
+        return etree.tostring(value, pretty_print=True).decode('utf-8')
 
 
 class ClassName(fields.Field):
@@ -197,7 +197,7 @@ class ClassName(fields.Field):
 
     _CHECK_ATTRIBUTE = False
 
-    class Meta:  # pylint: disable=old-style-class,missing-docstring,no-init
+    class Meta:  # pylint: disable=bad-option-value,old-style-class,missing-docstring,no-init
         dump_only = True
 
     def _serialize(self, value, attr, obj):

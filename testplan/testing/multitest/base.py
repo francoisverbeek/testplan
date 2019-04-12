@@ -22,6 +22,8 @@ from testplan.common.utils.interface import (
 from testplan.common.utils.thread import interruptible_join
 from testplan.common.utils.validation import is_subclass
 from testplan.common.utils.logger import TESTPLAN_LOGGER
+from testplan.common.utils.timing import timeout as timeout_deco
+from testplan.common.utils import callable as callable_utils
 from testplan.report import TestGroupReport, TestCaseReport
 from testplan.report.testing import Status
 
@@ -94,10 +96,12 @@ class MultiTestConfig(TestConfig):
             ConfigOption('result', default=Result): is_subclass(Result),
             ConfigOption('thread_pool_size', default=0): int,
             ConfigOption('max_thread_pool_size', default=10): int,
+            ConfigOption('stop_on_error', default=True): bool,
             ConfigOption('part', default=None): Or(None, And((int,),
                 lambda tp: len(tp) == 2 and 0 <= tp[0] < tp[1] and tp[1] > 1)),
             ConfigOption('interactive_runner', default=MultitestIRunner):
-                object
+                object,
+            ConfigOption('fix_spec_path', default=None): Or(None, And(str, os.path.exists))
         }
 
 
@@ -130,6 +134,9 @@ class MultiTest(Test):
     :type thread_pool_size: ``int``
     :param max_thread_pool_size: Maximum number of threads allowed in the pool.
     :type max_thread_pool_size: ``int``
+    :param stop_on_error: When exception raised, stop executing remaining
+        testcases in the current test suite. Default: True
+    :type stop_on_error: ``bool``
     :param part: Execute only a part of the total testcases. MultiTest needs to
         know which part of the total it is. Only works with Multitest.
     :type part: ``tuple`` of (``int``, ``int``)
@@ -184,6 +191,7 @@ class MultiTest(Test):
             uid=self.uid(),
             tags=self.cfg.tags,
             part=self.cfg.part,
+            fix_spec_path=self.cfg.fix_spec_path,
         )
 
     def _execute_step(self, step, *args, **kwargs):
@@ -489,8 +497,9 @@ class MultiTest(Test):
                                 testcase_report=testcase_report
                             )
                             if testcase_report.status == Status.ERROR:
-                                self._thread_pool_available = False
-                                break
+                                if self.cfg.stop_on_error:
+                                    self._thread_pool_available = False
+                                    break
 
                 time.sleep(self.cfg.active_loop_sleep)
 
@@ -545,7 +554,13 @@ class MultiTest(Test):
                 if pre_testcase and callable(pre_testcase):
                     _run_case_related(pre_testcase)
 
-                testcase(self.resources, case_result)
+                time_restriction = getattr(testcase, 'timeout', None)
+                if time_restriction:
+                    timeout_deco(
+                        time_restriction, 'Testcase timeout after {} seconds'
+                    )(testcase)(self.resources, case_result)
+                else:
+                    testcase(self.resources, case_result)
 
                 if post_testcase and callable(post_testcase):
                     _run_case_related(post_testcase)
@@ -581,18 +596,23 @@ class MultiTest(Test):
             self._run_testcase(
                 testcase, pre_testcase, post_testcase, testcase_report)
 
+            if testcase_report.status == Status.ERROR:
+                if self.cfg.stop_on_error:
+                    self.logger.debug(
+                        'Error executing testcase {}'
+                        ' - will stop thread pool'.format(testcase.__name__))
+                    self._thread_pool_available = False
+
             try:
+                # Call task_done() after setting thread pool unavailable, it
+                # makes sure that when self.cfg.stop_on_error is True and if
+                # a testcase in an execution group raises, no testcase in the
+                # next execution group has a chance to be put into task queue.
                 self._testcase_queue.task_done()
             except ValueError:
-                # When error occurs, testcase queue will be cleared and
-                # cannot accept 'task done' signal.
+                # When error occurs, testcase queue might already be cleared
+                # and cannot accept 'task done' signal.
                 pass
-
-            if testcase_report.status == Status.ERROR:
-                self.logger.debug(
-                    'Error executing testcase {} - stop thread pool'.format(
-                        testcase.__name__))
-                self._thread_pool_available = False
 
     def _start_thread_pool(self):
         """Start a thread pool for executing testcases in parallel."""
@@ -694,7 +714,7 @@ class MultiTest(Test):
                 description=func.__doc__,
             )
 
-            num_args = len(inspect.getargspec(func).args)
+            num_args = len(callable_utils.getargspec(func).args)
             args = (self.resources,) if num_args == 1 else (
                 self.resources, case_result)
 

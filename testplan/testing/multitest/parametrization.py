@@ -2,7 +2,6 @@
 Parametrization support for test cases.
 """
 import collections
-import inspect
 import itertools
 import re
 import warnings
@@ -10,6 +9,7 @@ import warnings
 import six
 
 from testplan.common.utils.convert import make_tuple
+from testplan.common.utils import callable as callable_utils
 from testplan.testing import tagging
 
 # Although any string will be processed as normal, it's a good
@@ -224,7 +224,7 @@ def _check_name_func(name_func):
     if not callable(name_func):
         raise ParametrizationError('name_func must be a callable.')
 
-    argspec = inspect.getargspec(name_func)
+    argspec = callable_utils.getargspec(name_func)
 
     if len(argspec.args) == 2:
         arg_1, arg_2 = argspec.args
@@ -246,7 +246,7 @@ def _check_tag_func(tag_func):
     if not callable(tag_func):
         raise ParametrizationError('tag_func must be a callable.')
 
-    argspec = inspect.getargspec(tag_func)
+    argspec = callable_utils.getargspec(tag_func)
 
     if len(argspec.args) == 1:
         arg_1 = argspec.args[0]
@@ -336,7 +336,8 @@ def generate_functions(
     num_passing,
     num_failing,
     key_combs_limit,
-    execution_group
+    execution_group,
+    timeout
 ):
     """
     Generate test cases using the given parameter context, use the name_func
@@ -382,6 +383,8 @@ def generate_functions(
     :param execution_group: Name of execution group in which the testcases
                             can be executed in parallel.
     :type execution_group: ``str``
+    :param timeout: Timeout in seconds to wait for testcase to be finished.
+    :type timeout: ``int``
     :return: List of functions that is testcase compliant
              (accepts ``self``, ``env``, ``result`` as arguments) and have
              unique names.
@@ -392,7 +395,7 @@ def generate_functions(
 
     _check_name_func(name_func)
 
-    argspec = inspect.getargspec(function)
+    argspec = callable_utils.getargspec(function)
     args = argspec.args[3:]  # get rid of self, env, result
     defaults = (argspec.defaults or [])
 
@@ -417,6 +420,7 @@ def generate_functions(
         func.summarize_num_failing = num_failing
         func.summarize_key_combs_limit = key_combs_limit
         func.execution_group = execution_group
+        func.timeout = timeout
 
     _ensure_unique_names(functions)
 
