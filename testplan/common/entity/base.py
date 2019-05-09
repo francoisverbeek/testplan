@@ -2,6 +2,7 @@
 Module containing base classes that represent object entities that can accept
 configuration, start/stop/run/abort, create results and have some state.
 """
+import atexit
 import getpass
 import os
 import sys
@@ -1287,6 +1288,19 @@ class ProfileCtx:
             import cProfile
             self.profiler = cProfile.Profile()
             self.count = 0
+            def _save_at_exit():
+                filename = 'testplan_profile_{who}/{pid}_{count}.pstat'.format(who=getpass.getuser(),
+                                                                               pid=os.getpid(),
+                                                                               count=self.count)
+                filename = os.path.join(tempfile.gettempdir(), filename)
+                try:
+                    os.makedirs(os.path.dirname(filename))
+                except FileExistsError:
+                    pass
+                self.profiler.dump_stats(filename)
+                print("Wrote {filename} for profile stats".format(filename=filename))
+            atexit.register(_save_at_exit)
+
 
     def __enter__(self):
         if self.enabled:
@@ -1296,15 +1310,4 @@ class ProfileCtx:
     def __exit__(self, *args, **kwargs):
         if self.enabled:
             self.profiler.disable()
-            filename = 'testplan_profile_{who}/{pid}_{thread}_{count}.pstat'.format(who=getpass.getuser(),
-                                                                                    pid=os.getpid(),
-                                                                            thread=threading.current_thread().ident,
-                                                                                    count=self.count)
-            filename = os.path.join(tempfile.gettempdir(), filename)
-            try:
-                os.makedirs(os.path.dirname(filename))
-            except FileExistsError:
-                pass
-            self.profiler.dump_stats(filename)
-            print("Wrote {filename} for profile stats".format(filename=filename))
         return False
