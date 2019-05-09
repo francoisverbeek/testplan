@@ -2,10 +2,11 @@
 Module containing base classes that represent object entities that can accept
 configuration, start/stop/run/abort, create results and have some state.
 """
-
+import getpass
 import os
 import sys
 import signal
+import tempfile
 import time
 import uuid
 import threading
@@ -23,6 +24,7 @@ from testplan.common.utils.thread import execute_as_thread
 from testplan.common.utils.timing import wait
 from testplan.common.utils.path import makeemptydirs, makedirs, default_runpath
 from testplan.common.utils import logger
+
 
 
 class Environment(object):
@@ -752,6 +754,8 @@ class Runnable(Entity):
         self._result = self.__class__.RESULT()
         self._steps = deque()
         self._ihandler = None
+        self._profiler = ProfileCtx()
+
 
     @property
     def result(self):
@@ -796,27 +800,29 @@ class Runnable(Entity):
         pass
 
     def _run(self):
+
         self.logger.debug('Running %s', self)
         self.status.change(RunnableStatus.RUNNING)
         while self.active:
             if self.status.tag == RunnableStatus.RUNNING:
                 try:
                     func, args, kwargs = self._steps.popleft()
-                    self.pre_step_call(func)
-                    if self.skip_step(func) is False:
-                        self.logger.debug(
-                            'Executing step of %s - %s', self, func.__name__)
-                        start_time = time.time()
-                        self._execute_step(func, *args, **kwargs)
-                        self.logger.debug(
-                            'Finished step of %s - %s. Took %ds',
-                            self,
-                            func.__name__,
-                            round(time.time() - start_time, 5))
-                    else:
-                        self.logger.debug(
-                            'Skipping step of %s - %s', self, func.__name__)
-                    self.post_step_call(func)
+                    with self._profiler:
+                        self.pre_step_call(func)
+                        if self.skip_step(func) is False:
+                            self.logger.debug(
+                                'Executing step of %s - %s', self, func.__name__)
+                            start_time = time.time()
+                            self._execute_step(func, *args, **kwargs)
+                            self.logger.debug(
+                                'Finished step of %s - %s. Took %ds',
+                                self,
+                                func.__name__,
+                                round(time.time() - start_time, 5))
+                        else:
+                            self.logger.debug(
+                                'Skipping step of %s - %s', self, func.__name__)
+                        self.post_step_call(func)
                 except IndexError:
                     self.status.change(RunnableStatus.FINISHED)
                     break
@@ -1263,3 +1269,42 @@ class RunnableManager(Entity):
     def aborting(self):
         """Suppressing not implemented debug log by parent class."""
         pass
+
+
+class ProfileCtx:
+    """
+    A context manager to enable a profiler for a section of the code.
+
+    Enable it by setting the environment variable PROFILE_ENABLED to 'true',
+    it will dump the profile stats (one file per invocation) in your
+    $TEMPDIR/testplan_profile_<username>/.
+    The stats file are named by <pid>_<thread id>_<invocation number>
+
+    """
+    def __init__(self):
+        if os.environ.get('PROFILE_ENABLED', "false").lower() in ('1', 'yes', 'true'):
+            self.enabled = True
+            import cProfile
+            self.profiler = cProfile.Profile()
+            self.count = 0
+
+    def __enter__(self):
+        if self.enabled:
+            self.profiler.enable()
+            self.count += 1
+
+    def __exit__(self, *args, **kwargs):
+        if self.enabled:
+            self.profiler.disable()
+            filename = 'testplan_profile_{who}/{pid}_{thread}_{count}.pstat'.format(who=getpass.getuser(),
+                                                                                    pid=os.getpid(),
+                                                                            thread=threading.current_thread().ident,
+                                                                                    count=self.count)
+            filename = os.path.join(tempfile.gettempdir(), filename)
+            try:
+                os.makedirs(os.path.dirname(filename))
+            except FileExistsError:
+                pass
+            self.profiler.dump_stats(filename)
+            print("Wrote {filename} for profile stats".format(filename=filename))
+        return False
