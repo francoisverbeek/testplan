@@ -697,10 +697,9 @@ class RunnableConfig(EntityConfig):
             ConfigOption(
                 'interactive_block',
                 default=hasattr(sys.modules['__main__'], '__file__')): bool,
-            ConfigOption('interactive_handler', default=RunnableIHandler):
-                object,
-            ConfigOption('interactive_runner', default=RunnableIRunner):
-                object
+            ConfigOption('interactive_handler', default=RunnableIHandler): object,
+            ConfigOption('interactive_runner', default=RunnableIRunner): object,
+            ConfigOption('enable_profiler', default=False, block_propagation=False): bool
         }
 
 
@@ -755,7 +754,7 @@ class Runnable(Entity):
         self._result = self.__class__.RESULT()
         self._steps = deque()
         self._ihandler = None
-        self._profiler = ProfileCtx()
+        self._profiler = ProfileCtx(self.cfg.enable_profiler)
 
 
     @property
@@ -1275,16 +1274,10 @@ class RunnableManager(Entity):
 class ProfileCtx:
     """
     A context manager to enable a profiler for a section of the code.
-
-    Enable it by setting the environment variable PROFILE_ENABLED to 'true',
-    it will dump the profile stats (one file per invocation) in your
-    $TEMPDIR/testplan_profile_<username>/.
-    The stats file are named by <pid>_<thread id>_<invocation number>
-
     """
-    def __init__(self):
-        if os.environ.get('PROFILE_ENABLED', "false").lower() in ('1', 'yes', 'true'):
-            self.enabled = True
+    def __init__(self, enabled):
+        self.enabled = enabled
+        if self.enabled:
             import cProfile
             self.profiler = cProfile.Profile()
             self.count = 0

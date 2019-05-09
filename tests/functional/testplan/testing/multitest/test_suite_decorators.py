@@ -74,7 +74,7 @@ class Suite2(object):
 def test_basic_multitest():
     plan = Testplan(name='Plan', parse_cmdline=False)
 
-    mtest = MultiTest(name='Name1', suites=[Suite1(), Suite2()])
+    mtest = MultiTest(name='Name1', suites=[Suite1(), Suite2()], enable_profiler=True)
     plan.add(mtest)
 
     with log_propagation_disabled(TESTPLAN_LOGGER):
